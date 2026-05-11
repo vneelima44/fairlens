@@ -1,23 +1,21 @@
 """
 FairLens — Credit Decisioning Tradeoffs
 
-Interactive demo that translates fairness metrics into dollar units.
-Slide the threshold, watch fairness metrics + dollar gap update in real time.
+v0.2 — adds bootstrap CIs and paradox significance test on the headline finding.
 
 Data:   HMDA 2021 NY mortgage applications, ~95K test records.
 Models: pre-trained, probabilities loaded from artifacts/test_probs.parquet.
-
-v0.1 additions:
-  - Key Finding callout (auto-detects Fairness Paradox)
-  - Model comparison table (all models at current settings)
-  - Multi-model gap-vs-threshold curve
+CIs:    pre-computed at default settings (threshold=0.5, LGD=0.4, discount=0.03)
+        from 1,000 bootstrap iterations; loaded from artifacts/bootstrap_cis.json.
 """
+
+import json
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-from plotly.subplots import make_subplots
 
 # ── Page config ────────────────────────────────────────────────────
 st.set_page_config(
@@ -36,7 +34,18 @@ def load_data():
     return probs, meta, cost
 
 
+@st.cache_data
+def load_cis():
+    """Load pre-computed bootstrap CIs if available."""
+    path = Path("artifacts/bootstrap_cis.json")
+    if not path.exists():
+        return None
+    with open(path) as f:
+        return json.load(f)
+
+
 probs, meta, cost = load_data()
+cis = load_cis()
 
 y_true_arr = meta["y_true"].values.astype(int)
 race_arr   = meta["race_binary"].values.astype(int)
@@ -50,9 +59,8 @@ def amortized_interest_npv_vec(loans, rates, terms, discount_rate):
     r = rates / 100.0 / 12.0
     d = discount_rate / 12.0
     n = (terms * 12).astype(int)
-
     valid = (r > 0) & (n > 0)
-    npv   = np.zeros_like(loans, dtype=float)
+    npv = np.zeros_like(loans, dtype=float)
 
     one_plus_r_n = np.zeros_like(loans, dtype=float)
     one_plus_r_n[valid] = (1 + r[valid]) ** n[valid]
@@ -72,9 +80,8 @@ def remaining_balance_vec(loans, rates, terms, default_years):
     r = rates / 100.0 / 12.0
     n = (terms * 12).astype(int)
     k = (default_years * 12).astype(int)
-
     valid = (r > 0) & (n > 0)
-    rb    = loans.copy().astype(float)
+    rb = loans.copy().astype(float)
 
     one_plus_r_n = np.zeros_like(loans, dtype=float)
     one_plus_r_n[valid] = (1 + r[valid]) ** n[valid]
@@ -96,7 +103,6 @@ def remaining_balance_vec(loans, rates, terms, default_years):
 
 @st.cache_data
 def compute_metrics(probs_array, threshold, lgd, discount_rate):
-    """Full metrics dict for given threshold + economic assumptions."""
     preds = (probs_array >= threshold).astype(int)
     results = {}
 
@@ -117,21 +123,13 @@ def compute_metrics(probs_array, threshold, lgd, discount_rate):
         fn_mask = (yt == 1) & (yp == 0)
         fp_mask = (yt == 0) & (yp == 1)
 
-        if fn_mask.any():
-            fn_costs = amortized_interest_npv_vec(
-                l[fn_mask], r_[fn_mask], t_[fn_mask], discount_rate
-            )
-            fn_cost = float(fn_costs.sum())
-        else:
-            fn_cost = 0.0
+        fn_cost = float(amortized_interest_npv_vec(
+            l[fn_mask], r_[fn_mask], t_[fn_mask], discount_rate
+        ).sum()) if fn_mask.any() else 0.0
 
-        if fp_mask.any():
-            fp_costs = remaining_balance_vec(
-                l[fp_mask], r_[fp_mask], t_[fp_mask], t_[fp_mask] / 2.0
-            ) * lgd
-            fp_cost = float(fp_costs.sum())
-        else:
-            fp_cost = 0.0
+        fp_cost = float((remaining_balance_vec(
+            l[fp_mask], r_[fp_mask], t_[fp_mask], t_[fp_mask] / 2.0
+        ) * lgd).sum()) if fp_mask.any() else 0.0
 
         results[label] = {
             "n":             n,
@@ -188,7 +186,6 @@ model_choice = st.sidebar.selectbox(
 threshold = st.sidebar.slider(
     "Decision threshold",
     min_value=0.0, max_value=1.0, value=0.5, step=0.01,
-    help="Probability cutoff above which the model approves the loan.",
 )
 
 st.sidebar.markdown("---")
@@ -197,14 +194,19 @@ st.sidebar.markdown("**Economic assumptions**")
 lgd = st.sidebar.slider(
     "Loss Given Default (LGD)",
     min_value=0.10, max_value=0.90, value=0.40, step=0.05,
-    help="Fraction of remaining balance lost on default. 0.40 is industry default.",
 )
 
 discount = st.sidebar.slider(
     "Discount rate",
     min_value=0.01, max_value=0.10, value=0.03, step=0.005,
     format="%.3f",
-    help="Annual discount rate for NPV. 0.03 matches 2021 rate environment.",
+)
+
+# Are we at canonical settings? (CIs only valid there)
+at_defaults = (
+    abs(threshold - 0.5) < 0.005
+    and abs(lgd - 0.4) < 0.005
+    and abs(discount - 0.03) < 0.001
 )
 
 
@@ -214,8 +216,7 @@ all_results = {
     for name in probs.columns
 }
 
-# Identify "highest DI" and "smallest abs gap" models
-highest_di_model = max(all_results, key=lambda k: all_results[k]["di"])
+highest_di_model   = max(all_results, key=lambda k: all_results[k]["di"])
 smallest_gap_model = min(all_results, key=lambda k: abs(all_results[k]["gap"]))
 
 highest_di     = all_results[highest_di_model]["di"]
@@ -229,10 +230,54 @@ total_n = (
 )
 
 
+# ── Helper to format a metric with CI when at defaults ────────────
+def fmt_with_ci(point, metric_name, model_name, kind="number"):
+    """Format a point estimate with bootstrap CI when at canonical settings."""
+    if not at_defaults or cis is None:
+        if kind == "money":
+            return f"${point:+,.0f}"
+        return f"{point:.3f}"
+
+    model_cis = cis.get("models", {}).get(model_name, {})
+    metric    = model_cis.get(metric_name)
+    if metric is None:
+        if kind == "money":
+            return f"${point:+,.0f}"
+        return f"{point:.3f}"
+
+    lo, hi = metric["ci_lower"], metric["ci_upper"]
+    if kind == "money":
+        return f"${point:+,.0f} [${lo:+,.0f}, ${hi:+,.0f}]"
+    return f"{point:.3f} [{lo:.3f}, {hi:.3f}]"
+
+
 # ── Key Finding callout ────────────────────────────────────────────
 if highest_di_model != smallest_gap_model:
-    cost_diff_per_app  = abs(highest_di_gap) - abs(smallest_gap)
-    cost_diff_total_M  = cost_diff_per_app * total_n / 1e6
+    cost_diff_per_app = abs(highest_di_gap) - abs(smallest_gap)
+    cost_diff_total_M = cost_diff_per_app * total_n / 1e6
+
+    # P-value addition if we have CIs and are at defaults
+    p_str = ""
+    if at_defaults and cis is not None:
+        pt = cis.get("paradox_test", {})
+        if (
+            "p_value_one_sided" in pt
+            and pt.get("highest_di_model") == highest_di_model
+            and pt.get("smallest_gap_model") == smallest_gap_model
+        ):
+            p = pt["p_value_one_sided"]
+            n_holds = pt["n_iterations_paradox_holds"]
+            n_iter = cis["metadata"]["n_iterations"]
+            if p < 1 / n_iter:
+                p_str = (
+                    f" Paradox holds in **{n_holds}/{n_iter} bootstrap samples** "
+                    f"(one-sided p < {1/n_iter:.4f})."
+                )
+            else:
+                p_str = (
+                    f" Paradox holds in **{n_holds}/{n_iter} bootstrap samples** "
+                    f"(one-sided p = {p:.4f})."
+                )
 
     st.info(
         f"📌 **The Fairness Paradox.** At your current settings, "
@@ -243,7 +288,7 @@ if highest_di_model != smallest_gap_model:
         f"(\\${smallest_gap:+,.0f} vs \\${highest_di_gap:+,.0f}). "
         f"Picking by DI alone leaves **\\${cost_diff_per_app:,.0f} per applicant** "
         f"of disparate cost on the table — about **\\${cost_diff_total_M:,.0f}M** "
-        f"over the {total_n:,} applicants in this test set."
+        f"over the {total_n:,} applicants in this test set." + p_str
     )
 else:
     st.success(
@@ -255,7 +300,16 @@ else:
 
 # ── Model comparison table ─────────────────────────────────────────
 st.subheader("All models at current settings")
-st.caption("Sorted by absolute racial gap (smallest first).")
+caption_text = "Sorted by absolute racial gap (smallest first)."
+if at_defaults and cis is not None:
+    caption_text += (
+        f"  CIs from {cis['metadata']['n_iterations']} bootstrap iterations "
+        f"at default settings."
+    )
+else:
+    caption_text += "  (Move sliders back to defaults — threshold 0.50, "
+    caption_text += "LGD 0.40, discount 0.030 — to see 95% confidence intervals.)"
+st.caption(caption_text)
 
 comp_rows = []
 for name, r in sorted(all_results.items(), key=lambda x: abs(x[1]["gap"])):
@@ -272,11 +326,11 @@ for name, r in sorted(all_results.items(), key=lambda x: abs(x[1]["gap"])):
         annotation = " ← highest DI"
 
     comp_rows.append({
-        "Model": name + annotation,
-        "Disparate Impact": f"{r['di']:.3f}",
-        "Per-applicant gap": f"${r['gap']:+,.0f}",
-        "Approval rate": f"{approval:.1%}",
-        "ECOA (DI≥0.8)": "✅ Pass" if r["di"] >= 0.8 else "❌ Fail",
+        "Model":             name + annotation,
+        "Disparate Impact":  fmt_with_ci(r["di"], "di", name),
+        "Per-applicant gap": fmt_with_ci(r["gap"], "gap", name, kind="money"),
+        "Approval rate":     f"{approval:.1%}",
+        "ECOA (DI≥0.8)":     "✅ Pass" if r["di"] >= 0.8 else "❌ Fail",
     })
 
 comp_df = pd.DataFrame(comp_rows)
@@ -299,19 +353,34 @@ avg_approval = (
 
 col1, col2, col3, col4 = st.columns(4)
 
+# Show CI as the metric's "delta" (subtitle) when at defaults
+def metric_delta(metric_name, kind="number"):
+    if not at_defaults or cis is None:
+        return None
+    model_cis = cis.get("models", {}).get(model_choice, {})
+    metric = model_cis.get(metric_name)
+    if metric is None:
+        return None
+    lo, hi = metric["ci_lower"], metric["ci_upper"]
+    if kind == "money":
+        return f"95% CI: [${lo:+,.0f}, ${hi:+,.0f}]"
+    return f"95% CI: [{lo:.3f}, {hi:.3f}]"
+
 with col1:
     st.metric(
         "Per-applicant racial gap",
         f"${m['gap']:,.0f}",
-        help="NonWhite per-applicant cost minus White per-applicant cost.",
+        delta=metric_delta("gap", kind="money"),
+        delta_color="off",
     )
 
 with col2:
+    di_delta = metric_delta("di")
     st.metric(
         "Disparate Impact",
         f"{m['di']:.3f}",
-        delta="ECOA pass" if m["di"] >= 0.8 else "ECOA fail",
-        delta_color="normal" if m["di"] >= 0.8 else "inverse",
+        delta=di_delta if di_delta else ("ECOA pass" if m["di"] >= 0.8 else "ECOA fail"),
+        delta_color="off" if di_delta else ("normal" if m["di"] >= 0.8 else "inverse"),
     )
 
 with col3:
@@ -321,7 +390,8 @@ with col4:
     st.metric(
         "Equalized Odds Diff",
         f"{m['eod']:+.3f}",
-        help="True positive rate gap, NonWhite minus White. Closer to 0 = more equal.",
+        delta=metric_delta("eod"),
+        delta_color="off",
     )
 
 st.divider()
@@ -362,10 +432,10 @@ with right:
             "FPR Difference",
         ],
         "Value": [
-            f"{m['di']:.3f}",
-            f"{m['spd']:+.3f}",
-            f"{m['eod']:+.3f}",
-            f"{m['fpr_diff']:+.3f}",
+            fmt_with_ci(m["di"],  "di",  model_choice),
+            fmt_with_ci(m["spd"], "spd", model_choice),
+            fmt_with_ci(m["eod"], "eod", model_choice),
+            f"{m['fpr_diff']:+.3f}",  # not bootstrapped
         ],
         "Status": [
             "✅ Pass" if m["di"] >= 0.8 else "❌ Fail",
@@ -417,15 +487,12 @@ st.caption(
 
 @st.cache_data
 def compute_curve_all_models(_probs_columns, lgd_val, discount_val):
-    """Compute gap curves for every model at every threshold (cached)."""
     thresholds = np.linspace(0.05, 0.95, 30)
     curves = {}
     for name in _probs_columns:
         probs_arr = probs[name].values
-        gaps = []
-        for t in thresholds:
-            r = compute_metrics(probs_arr, float(t), lgd_val, discount_val)
-            gaps.append(r["gap"])
+        gaps = [compute_metrics(probs_arr, float(t), lgd_val, discount_val)["gap"]
+                for t in thresholds]
         curves[name] = np.array(gaps)
     return thresholds, curves
 
@@ -434,7 +501,6 @@ thresholds_arr, curves = compute_curve_all_models(
     tuple(probs.columns), lgd, discount
 )
 
-# Color palette — keep selected model bright, others muted
 colors = {
     "LR Baseline":     "#4A90E2",
     "LR Manual RW":    "#7B61FF",
@@ -480,7 +546,9 @@ st.markdown(
 **Method note.** Costs computed from HMDA 2021 NY applications using a per-applicant
 cost framework: false negatives valued at NPV of foregone interest (lender's lost
 income on a creditworthy applicant denied); false positives at remaining balance ×
-LGD (lender's loss on a default they should have caught). Cost values are sensitive
-to discount rate and LGD assumptions — slide them above to see the impact.
+LGD (lender's loss on a default they should have caught). Confidence intervals
+displayed when sliders are at defaults are 95% percentile CIs from 1,000 bootstrap
+iterations on the test set. Cost values are sensitive to discount rate and LGD
+assumptions — slide them above to see the impact.
     """
 )

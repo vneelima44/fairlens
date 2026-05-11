@@ -1,0 +1,110 @@
+{
+  "metadata": {
+    "n_iterations": 1000,
+    "n_samples": 95588,
+    "threshold": 0.5,
+    "lgd": 0.4,
+    "discount": 0.03,
+    "method": "percentile bootstrap, 95% CI (2.5\u201397.5)",
+    "seed": 42
+  },
+  "models": {
+    "LR Baseline": {
+      "di": {
+        "point_estimate": 0.97878130289928,
+        "bootstrap_mean": 0.9788358556729885,
+        "std": 0.002115982831473157,
+        "ci_lower": 0.9747941766208408,
+        "ci_upper": 0.9829956033797114
+      },
+      "gap": {
+        "point_estimate": 4711.020517841636,
+        "bootstrap_mean": 4729.148556479511,
+        "std": 323.7858538546183,
+        "ci_lower": 4113.344582287,
+        "ci_upper": 5360.969756318228
+      },
+      "spd": {
+        "point_estimate": -0.020177621558815417,
+        "bootstrap_mean": -0.020125516259210392,
+        "std": 0.002018921620816769,
+        "ci_lower": -0.02399984883832635,
+        "ci_upper": -0.016150633537325935
+      },
+      "eod": {
+        "point_estimate": 0.00039809790485867413,
+        "bootstrap_mean": 0.00041393697319096814,
+        "std": 0.0011510494137398526,
+        "ci_lower": -0.0017645323835017268,
+        "ci_upper": 0.0027522172050152027
+      }
+    },
+    "LR Manual RW": {
+      "di": {
+        "point_estimate": 0.898758975999907,
+        "bootstrap_mean": 0.898606507051667,
+        "std": 0.00551182915673976,
+        "ci_lower": 0.8876564574464413,
+        "ci_upper": 0.9096508627014739
+      },
+      "gap": {
+        "point_estimate": 2916.201039736009,
+        "bootstrap_mean": 2920.771935324134,
+        "std": 271.63216985286203,
+        "ci_lower": 2399.548477402001,
+        "ci_upper": 3463.721628887853
+      },
+      "spd": {
+        "point_estimate": -0.06928991200976575,
+        "bootstrap_mean": -0.06940143155756041,
+        "std": 0.0038419567662414987,
+        "ci_lower": -0.0771428322029786,
+        "ci_upper": -0.06170039974567604
+      },
+      "eod": {
+        "point_estimate": -0.04571791954889004,
+        "bootstrap_mean": -0.045829301564631726,
+        "std": 0.004066720536008381,
+        "ci_lower": -0.053447289865215075,
+        "ci_upper": -0.037490201315208894
+      }
+    },
+    "NN + Focal Loss": {
+      "di": {
+        "point_estimate": 0.9697591739590397,
+        "bootstrap_mean": 0.9696913172566194,
+        "std": 0.004643132149679984,
+        "ci_lower": 0.9604859465434595,
+        "ci_upper": 0.9788568275551301
+      },
+      "gap": {
+        "point_estimate": 2332.557968473843,
+        "bootstrap_mean": 2349.5922487922353,
+        "std": 251.8712208429002,
+        "ci_lower": 1852.9184261612684,
+        "ci_upper": 2848.4422047749745
+      },
+      "spd": {
+        "point_estimate": -0.022852034706011715,
+        "bootstrap_mean": -0.022905814928606452,
+        "std": 0.0035274505206007566,
+        "ci_lower": -0.029939912211587996,
+        "ci_upper": -0.01593549471341253
+      },
+      "eod": {
+        "point_estimate": 0.011239813529507425,
+        "bootstrap_mean": 0.011088070393760847,
+        "std": 0.003153592632111153,
+        "ci_lower": 0.005003321515421727,
+        "ci_upper": 0.016900056244189256
+      }
+    }
+  },
+  "paradox_test": {
+    "highest_di_model": "LR Baseline",
+    "smallest_gap_model": "NN + Focal Loss",
+    "n_iterations_paradox_holds": 1000,
+    "p_value_one_sided": 0.000999000999000999,
+    "description": "Paradox holds in 1000/1000 bootstrap samples"
+  }
+}
