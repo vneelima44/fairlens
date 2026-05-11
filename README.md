@@ -54,8 +54,6 @@ Cost values are assumption-sensitive. Sliding LGD or discount rate shows the use
 
 ### Models trained (10 total)
 
-In the [Colab notebook](#) (not in the live demo, which uses three representative models for narrative clarity):
-
 - LR Baseline, LR Balanced, LR with manual reweighing, LR with proxy-feature removal, LR with reweighing + proxy removal, LR with AIF360 reweighing
 - SVM Linear (calibrated)
 - Decision Tree (constrained), Random Forest
