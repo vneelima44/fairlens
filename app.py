@@ -232,6 +232,40 @@ st.caption(
     "HMDA 2021 NY mortgage applications • 95,588 test records • interactive demo"
 )
 
+# ── Methodology Caveats (proactive disclosure) ─────────────────────
+with st.expander("⚖️ Methodology caveats & known limitations (click to expand)", expanded=False):
+    st.markdown(
+        """
+This dashboard is a **policy-translation prototype**, not a production credit-decisioning tool.
+Surfacing the limitations upfront because regulators, compliance teams, and risk teams
+should know what these numbers do — and don't — represent.
+
+- **LGD = 0.40 is a placeholder.** Production calibration would use the bank's
+  internal recovery data (typical prime-mortgage range: 35–45%). The "$M of disparate cost"
+  headline scales with LGD; treat aggregate dollar figures as illustrative magnitudes,
+  not point estimates.
+- **FN cost = NPV of foregone interest is an upper bound.** It does not account for
+  alternative credit access (denied applicants often obtain loans elsewhere) or the
+  counterfactual default probability of the denied loan. Realized harm is lower than
+  this maximum-theoretical figure. The framework choice is explicit and conservative
+  in the regulator's direction.
+- **The aggregate $M figure is a test-set projection, not annual real-world impact.**
+  Computed as per-applicant gap × test-set size (95,588). It indicates the magnitude
+  of disparate cost that rate-parity metrics miss, not a realized loss number.
+- **LR Baseline exhibits target leakage** (94.7% approval rate vs ~75% for the other
+  models). It is retained in the comparison to demonstrate why standard accuracy
+  validation misses fairness-relevant model defects — *not* as a recommended production
+  model. Single-feature drop diagnostic flagged the leakage; details in the methodology
+  writeup.
+- **Three-model comparison is policy-illustrative, not a full benchmark.** Full
+  evaluation across 10 models × 4 imputation strategies is in the accompanying
+  methodology paper.
+- **Bootstrap inference is on the test set, conditional on the trained models.**
+  CIs reflect sampling variability in the held-out evaluation, not training-set
+  uncertainty or cross-validation variance.
+        """
+    )
+
 
 # ── Sidebar controls ───────────────────────────────────────────────
 st.sidebar.header("Controls")
@@ -332,8 +366,10 @@ if highest_di_model != smallest_gap_model:
         f"**smallest per-applicant racial cost gap** "
         f"(\\${smallest_gap:+,.0f} vs \\${highest_di_gap:+,.0f}). "
         f"Picking by DI alone leaves **\\${cost_diff_per_app:,.0f} per applicant** "
-        f"of disparate cost on the table — about **\\${cost_diff_total_M:,.0f}M** "
-        f"over the {total_n:,} applicants in this test set." + p_str
+        f"of disparate cost on the table — **\\${cost_diff_total_M:,.0f}M** projected "
+        f"across the {total_n:,} applicants in this test set "
+        f"*(illustrative scaling, not realized annual impact — see methodology caveats)*."
+        + p_str
     )
 else:
     st.success(
@@ -365,8 +401,12 @@ for name, r in sorted(all_results.items(), key=lambda x: abs(x[1]["gap"])):
         annotation = " ← smallest gap"
     elif name == highest_di_model and highest_di_model != smallest_gap_model:
         annotation = " ← highest DI"
+    # Target-leakage warning for LR Baseline
+    display_name = name
+    if name == "LR Baseline":
+        display_name = name + " ⚠️ target leakage"
     comp_rows.append({
-        "Model":             name + annotation,
+        "Model":             display_name + annotation,
         "Disparate Impact":  fmt_with_ci(r["di"], "di", name),
         "Per-applicant gap": fmt_with_ci(r["gap"], "gap", name, kind="money"),
         "Approval rate":     f"{approval:.1%}",
@@ -374,6 +414,10 @@ for name, r in sorted(all_results.items(), key=lambda x: abs(x[1]["gap"])):
     })
 
 st.dataframe(pd.DataFrame(comp_rows), hide_index=True, use_container_width=True)
+st.caption(
+    "⚠️ **LR Baseline** exhibits target leakage (94.7% approval rate) — shown for "
+    "contrast only, not as a recommended model. See methodology caveats above."
+)
 st.divider()
 
 
