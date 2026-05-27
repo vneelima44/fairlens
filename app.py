@@ -781,3 +781,170 @@ HMDA `derived_race` + `derived_ethnicity` (Hispanic overrides race per HMDA conv
 The "Other" subgroup (<1% of test set) is omitted from the table for clarity.
     """
 )
+
+# ── CSV Upload Tab ─────────────────────────────────────────────────────────────
+st.divider()
+st.header("🔍 Analyze Your Own Dataset")
+st.markdown(
+    "Upload any lending CSV with model predictions to get a full fairness audit. "
+    "Your data stays in your browser — nothing is stored."
+)
+
+uploaded_file = st.file_uploader("Upload a CSV file", type=["csv"])
+
+if uploaded_file is not None:
+    try:
+        user_df = pd.read_csv(uploaded_file)
+        st.success(f"✅ Loaded {len(user_df):,} rows × {len(user_df.columns)} columns")
+
+        st.subheader("Step 1 — Map your columns")
+        col_options = ["(not available)"] + list(user_df.columns)
+
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            col_outcome = st.selectbox(
+                "Actual outcome (1=approved, 0=denied)",
+                col_options, key="col_outcome"
+            )
+        with c2:
+            col_prob = st.selectbox(
+                "Predicted probability (0–1)",
+                col_options, key="col_prob"
+            )
+        with c3:
+            col_group = st.selectbox(
+                "Protected group column",
+                col_options, key="col_group"
+            )
+        with c4:
+            col_loan = st.selectbox(
+                "Loan amount (optional)",
+                col_options, key="col_loan"
+            )
+
+        required = [col_outcome, col_prob, col_group]
+        if all(c != "(not available)" for c in required):
+
+            st.subheader("Step 2 — Define your protected group")
+            unique_groups = sorted(user_df[col_group].dropna().unique())
+            majority_group = st.selectbox(
+                "Which value is the MAJORITY / reference group?",
+                unique_groups, key="majority_group"
+            )
+
+            run_btn = st.button("▶ Run Fairness Audit", type="primary")
+
+            if run_btn:
+                df = user_df.copy()
+                df["_y_true"] = pd.to_numeric(df[col_outcome], errors="coerce")
+                df["_prob"]   = pd.to_numeric(df[col_prob],    errors="coerce")
+                df["_group"]  = (df[col_group] == majority_group).astype(int)
+
+                if col_loan != "(not available)":
+                    df["_loan"] = pd.to_numeric(df[col_loan], errors="coerce").fillna(0)
+                else:
+                    df["_loan"] = 0.0
+
+                df = df.dropna(subset=["_y_true", "_prob"])
+
+                if len(df) < 50:
+                    st.error("Need at least 50 valid rows to run a fairness audit.")
+                else:
+                    u_threshold = st.slider(
+                        "Decision threshold", 0.0, 1.0, 0.5, 0.01, key="u_thresh"
+                    )
+                    df["_pred"] = (df["_prob"] >= u_threshold).astype(int)
+
+                    def grp_stats(mask):
+                        g = df[mask]
+                        yt = g["_y_true"].values.astype(int)
+                        yp = g["_pred"].values.astype(int)
+                        n  = len(g)
+                        tp = int(((yt==1)&(yp==1)).sum())
+                        fn = int(((yt==1)&(yp==0)).sum())
+                        fp = int(((yt==0)&(yp==1)).sum())
+                        tn = int(((yt==0)&(yp==0)).sum())
+                        approval = float(yp.mean())
+                        tpr = tp/(tp+fn) if (tp+fn)>0 else 0.0
+                        fpr = fp/(fp+tn) if (fp+tn)>0 else 0.0
+                        avg_loan = float(g["_loan"].mean())
+                        fn_cost = float(g.loc[(g["_y_true"]==1)&(g["_pred"]==0), "_loan"].sum()) * 0.06
+                        fp_cost = float(g.loc[(g["_y_true"]==0)&(g["_pred"]==1), "_loan"].sum()) * 0.40
+                        total_cost = fn_cost + fp_cost
+                        per_app = total_cost / n if n > 0 else 0.0
+                        return dict(n=n, approval=approval, tpr=tpr, fpr=fpr,
+                                    fn=fn, fp=fp, avg_loan=avg_loan,
+                                    fn_cost=fn_cost, fp_cost=fp_cost, per_app=per_app)
+
+                    maj = grp_stats(df["_group"] == 1)
+                    min_ = grp_stats(df["_group"] == 0)
+
+                    di  = min_["approval"] / max(maj["approval"], 1e-9)
+                    spd = min_["approval"] - maj["approval"]
+                    eod = min_["tpr"]      - maj["tpr"]
+                    fpd = min_["fpr"]      - maj["fpr"]
+                    gap = min_["per_app"]  - maj["per_app"]
+
+                    st.subheader("📊 Fairness Audit Results")
+
+                    m1, m2, m3, m4 = st.columns(4)
+                    m1.metric("Disparate Impact",      f"{di:.3f}",  delta="ECOA Pass ✅" if di >= 0.8 else "ECOA Fail ❌", delta_color="normal" if di >= 0.8 else "inverse")
+                    m2.metric("Statistical Parity Diff", f"{spd:+.3f}", delta="✅ OK" if abs(spd)<0.05 else "⚠️ High", delta_color="normal" if abs(spd)<0.05 else "inverse")
+                    m3.metric("Equalized Odds Diff",   f"{eod:+.3f}", delta="✅ OK" if abs(eod)<0.05 else "⚠️ High", delta_color="normal" if abs(eod)<0.05 else "inverse")
+                    m4.metric("Per-applicant cost gap", f"${gap:+,.0f}")
+
+                    st.subheader("Group Comparison")
+                    minority_label = f"Non-{majority_group}"
+                    cmp_df = pd.DataFrame({
+                        "Group":          [majority_group, minority_label],
+                        "N":              [maj["n"],        min_["n"]],
+                        "Approval rate":  [f"{maj['approval']:.1%}", f"{min_['approval']:.1%}"],
+                        "True Pos Rate":  [f"{maj['tpr']:.3f}",      f"{min_['tpr']:.3f}"],
+                        "False Pos Rate": [f"{maj['fpr']:.3f}",      f"{min_['fpr']:.3f}"],
+                        "Wrongful denials (FN)": [maj["fn"], min_["fn"]],
+                        "Per-applicant cost ($)": [f"${maj['per_app']:,.0f}", f"${min_['per_app']:,.0f}"],
+                    })
+                    st.dataframe(cmp_df, hide_index=True, use_container_width=True)
+
+                    st.subheader("Fairness Metrics Summary")
+                    fm_df = pd.DataFrame({
+                        "Metric": ["Disparate Impact (≥0.8 = ECOA pass)",
+                                   "Statistical Parity Difference (|val|<0.05 = OK)",
+                                   "Equalized Odds Difference (|val|<0.05 = OK)",
+                                   "FPR Difference"],
+                        "Value":  [f"{di:.3f}", f"{spd:+.3f}", f"{eod:+.3f}", f"{fpd:+.3f}"],
+                        "Status": ["✅ Pass" if di>=0.8  else "❌ Fail",
+                                   "✅ OK"   if abs(spd)<0.05 else "⚠️ Review",
+                                   "✅ OK"   if abs(eod)<0.05 else "⚠️ Review",
+                                   "✅ OK"   if abs(fpd)<0.05 else "⚠️ Review"],
+                    })
+                    st.dataframe(fm_df, hide_index=True, use_container_width=True)
+
+                    if di >= 0.8 and abs(gap) > 500:
+                        st.warning(
+                            f"⚠️ **Fairness Paradox detected.** "
+                            f"Disparate Impact = {di:.3f} (ECOA pass), but the per-applicant "
+                            f"cost gap is **${gap:+,.0f}**. Your model passes the rate-based "
+                            f"compliance check but still carries a meaningful dollar-denominated "
+                            f"disparity. This is the blind spot FairLens is designed to surface."
+                        )
+                    elif di < 0.8:
+                        st.error(
+                            f"❌ **ECOA violation.** Disparate Impact = {di:.3f} — "
+                            f"below the 80% threshold. This model would likely fail a "
+                            f"fair lending examination."
+                        )
+                    else:
+                        st.success("✅ Model passes both ECOA (DI) and cost-gap checks at this threshold.")
+
+                    st.caption(
+                        "Cost estimates use simplified assumptions: FN cost = 6% of loan amount "
+                        "(approximate foregone interest), FP cost = 40% LGD × loan amount. "
+                        "For production use, calibrate with your institution's actual LGD and "
+                        "interest rate data."
+                    )
+        else:
+            st.info("👆 Map the required columns above (outcome, probability, group) to run the audit.")
+
+    except Exception as e:
+        st.error(f"Error reading file: {e}")
