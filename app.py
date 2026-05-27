@@ -805,6 +805,8 @@ st.markdown("""
 
 | Column | Required? | Description | Example values |
 |---|---|---|---|
+| **applicant_id** | ➖ Ignored | Unique row identifier — not used in analysis | `1`, `2`, `3`... |
+| **annual_income** | ➖ Ignored | Any extra feature columns — ignored by the audit, kept for your reference | `85000` |
 | **Actual outcome** | ✅ Yes | Ground truth — did this applicant get approved? | `1` = approved / good loan, `0` = denied / defaulted |
 | **Predicted probability** | ✅ Yes | Your model's raw score for this applicant (before applying a threshold) | `0.82` = model is 82% confident this is a good loan |
 | **Protected group** | ✅ Yes | The demographic attribute you want to audit for bias | `White`, `Black`, `Hispanic`, `Asian` — or `Male`/`Female`, etc. |
