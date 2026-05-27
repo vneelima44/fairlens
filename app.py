@@ -790,6 +790,16 @@ st.markdown(
     "Your data stays in your browser — nothing is stored."
 )
 
+sample_path = Path("artifacts/sample_lending_data.csv")
+if sample_path.exists():
+    with open(sample_path, "rb") as _sf:
+        st.download_button(
+            label="📥 Download sample CSV (see expected format)",
+            data=_sf.read(),
+            file_name="sample_lending_data.csv",
+            mime="text/csv",
+        )
+
 uploaded_file = st.file_uploader("Upload a CSV file", type=["csv"])
 
 if uploaded_file is not None:
