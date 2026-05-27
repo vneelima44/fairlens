@@ -1,0 +1,19 @@
+[theme]
+# FairLens brand theme — deep navy primary, clean white background
+primaryColor        = "#1B4F72"   # deep navy — signals trust / finance
+backgroundColor     = "#FFFFFF"
+secondaryBackgroundColor = "#F4F6F8"  # very light slate for sidebar
+textColor           = "#1A1A2E"   # near-black, easy on eyes
+font                = "sans serif"
+
+[server]
+# Keeps the app awake longer; helps prevent the "sleeping" state during demos
+maxUploadSize       = 50
+enableStaticServing = false
+
+[browser]
+gatherUsageStats    = false   # privacy-friendly; no Streamlit telemetry
+
+[runner]
+# Faster cold-start by not re-running on every widget interaction
+fastReruns          = true
