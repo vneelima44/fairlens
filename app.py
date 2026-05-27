@@ -800,6 +800,19 @@ if sample_path.exists():
             mime="text/csv",
         )
 
+st.markdown("""
+**📋 Column Guide — what your CSV needs:**
+
+| Column | Required? | Description | Example values |
+|---|---|---|---|
+| **Actual outcome** | ✅ Yes | Ground truth — did this applicant get approved? | `1` = approved / good loan, `0` = denied / defaulted |
+| **Predicted probability** | ✅ Yes | Your model's raw score for this applicant (before applying a threshold) | `0.82` = model is 82% confident this is a good loan |
+| **Protected group** | ✅ Yes | The demographic attribute you want to audit for bias | `White`, `Black`, `Hispanic`, `Asian` — or `Male`/`Female`, etc. |
+| **Loan amount** | ⚡ Optional | Enables dollar cost gap calculation — the most powerful FairLens insight | `280000` |
+
+> 💡 **Tip:** Your model's raw probability score is what gets output before the approval/denial decision is made. In most ML pipelines this is `model.predict_proba(X)[:,1]`.
+""")
+
 uploaded_file = st.file_uploader("Upload a CSV file", type=["csv"])
 
 if uploaded_file is not None:
